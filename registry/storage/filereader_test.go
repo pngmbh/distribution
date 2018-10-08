@@ -2,21 +2,19 @@ package storage
 
 import (
 	"bytes"
-	"crypto/rand"
 	"io"
 	mrand "math/rand"
-	"os"
 	"testing"
 
 	"github.com/docker/distribution/context"
-	"github.com/docker/distribution/digest"
 	"github.com/docker/distribution/registry/storage/driver/inmemory"
+	"github.com/opencontainers/go-digest"
 )
 
 func TestSimpleRead(t *testing.T) {
 	ctx := context.Background()
 	content := make([]byte, 1<<20)
-	n, err := rand.Read(content)
+	n, err := mrand.Read(content)
 	if err != nil {
 		t.Fatalf("unexpected error building random data: %v", err)
 	}
@@ -42,11 +40,7 @@ func TestSimpleRead(t *testing.T) {
 		t.Fatalf("error allocating file reader: %v", err)
 	}
 
-	verifier, err := digest.NewDigestVerifier(dgst)
-	if err != nil {
-		t.Fatalf("error getting digest verifier: %s", err)
-	}
-
+	verifier := dgst.Verifier()
 	io.Copy(verifier, fr)
 
 	if !verifier.Verified() {
@@ -77,7 +71,7 @@ func TestFileReaderSeek(t *testing.T) {
 	for _, repitition := range mrand.Perm(repititions - 1) {
 		targetOffset := int64(len(pattern) * repitition)
 		// Seek to a multiple of pattern size and read pattern size bytes
-		offset, err := fr.Seek(targetOffset, os.SEEK_SET)
+		offset, err := fr.Seek(targetOffset, io.SeekStart)
 		if err != nil {
 			t.Fatalf("unexpected error seeking: %v", err)
 		}
@@ -102,7 +96,7 @@ func TestFileReaderSeek(t *testing.T) {
 		}
 
 		// Check offset
-		current, err := fr.Seek(0, os.SEEK_CUR)
+		current, err := fr.Seek(0, io.SeekCurrent)
 		if err != nil {
 			t.Fatalf("error checking current offset: %v", err)
 		}
@@ -112,7 +106,7 @@ func TestFileReaderSeek(t *testing.T) {
 		}
 	}
 
-	start, err := fr.Seek(0, os.SEEK_SET)
+	start, err := fr.Seek(0, io.SeekStart)
 	if err != nil {
 		t.Fatalf("error seeking to start: %v", err)
 	}
@@ -121,7 +115,7 @@ func TestFileReaderSeek(t *testing.T) {
 		t.Fatalf("expected to seek to start: %v != 0", start)
 	}
 
-	end, err := fr.Seek(0, os.SEEK_END)
+	end, err := fr.Seek(0, io.SeekEnd)
 	if err != nil {
 		t.Fatalf("error checking current offset: %v", err)
 	}
@@ -133,13 +127,13 @@ func TestFileReaderSeek(t *testing.T) {
 	// 4. Seek before start, ensure error.
 
 	// seek before start
-	before, err := fr.Seek(-1, os.SEEK_SET)
+	before, err := fr.Seek(-1, io.SeekStart)
 	if err == nil {
 		t.Fatalf("error expected, returned offset=%v", before)
 	}
 
 	// 5. Seek after end,
-	after, err := fr.Seek(1, os.SEEK_END)
+	after, err := fr.Seek(1, io.SeekEnd)
 	if err != nil {
 		t.Fatalf("unexpected error expected, returned offset=%v", after)
 	}
@@ -183,7 +177,7 @@ func TestFileReaderNonExistentFile(t *testing.T) {
 // conditions that can arise when reading a layer.
 func TestFileReaderErrors(t *testing.T) {
 	// TODO(stevvooe): We need to cover error return types, driven by the
-	// errors returned via the HTTP API. For now, here is a incomplete list:
+	// errors returned via the HTTP API. For now, here is an incomplete list:
 	//
 	// 	1. Layer Not Found: returned when layer is not found or access is
 	//        denied.

@@ -3,6 +3,7 @@ package filesystem
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -10,14 +11,28 @@ import (
 	"path"
 	"time"
 
-	"github.com/docker/distribution/context"
 	storagedriver "github.com/docker/distribution/registry/storage/driver"
 	"github.com/docker/distribution/registry/storage/driver/base"
 	"github.com/docker/distribution/registry/storage/driver/factory"
 )
 
-const driverName = "filesystem"
-const defaultRootDirectory = "/var/lib/registry"
+const (
+	driverName           = "filesystem"
+	defaultRootDirectory = "/var/lib/registry"
+	defaultMaxThreads    = uint64(100)
+
+	// minThreads is the minimum value for the maxthreads configuration
+	// parameter. If the driver's parameters are less than this we set
+	// the parameters to minThreads
+	minThreads = uint64(25)
+)
+
+// DriverParameters represents all configuration options available for the
+// filesystem driver
+type DriverParameters struct {
+	RootDirectory string
+	MaxThreads    uint64
+}
 
 func init() {
 	factory.Register(driverName, &filesystemDriverFactory{})
@@ -27,7 +42,7 @@ func init() {
 type filesystemDriverFactory struct{}
 
 func (factory *filesystemDriverFactory) Create(parameters map[string]interface{}) (storagedriver.StorageDriver, error) {
-	return FromParameters(parameters), nil
+	return FromParameters(parameters)
 }
 
 type driver struct {
@@ -47,25 +62,48 @@ type Driver struct {
 // FromParameters constructs a new Driver with a given parameters map
 // Optional Parameters:
 // - rootdirectory
-func FromParameters(parameters map[string]interface{}) *Driver {
-	var rootDirectory = defaultRootDirectory
+// - maxthreads
+func FromParameters(parameters map[string]interface{}) (*Driver, error) {
+	params, err := fromParametersImpl(parameters)
+	if err != nil || params == nil {
+		return nil, err
+	}
+	return New(*params), nil
+}
+
+func fromParametersImpl(parameters map[string]interface{}) (*DriverParameters, error) {
+	var (
+		err           error
+		maxThreads    = defaultMaxThreads
+		rootDirectory = defaultRootDirectory
+	)
+
 	if parameters != nil {
-		rootDir, ok := parameters["rootdirectory"]
-		if ok {
+		if rootDir, ok := parameters["rootdirectory"]; ok {
 			rootDirectory = fmt.Sprint(rootDir)
 		}
+
+		maxThreads, err = base.GetLimitFromParameter(parameters["maxthreads"], minThreads, defaultMaxThreads)
+		if err != nil {
+			return nil, fmt.Errorf("maxthreads config error: %s", err.Error())
+		}
 	}
-	return New(rootDirectory)
+
+	params := &DriverParameters{
+		RootDirectory: rootDirectory,
+		MaxThreads:    maxThreads,
+	}
+	return params, nil
 }
 
 // New constructs a new Driver with a given rootDirectory
-func New(rootDirectory string) *Driver {
+func New(params DriverParameters) *Driver {
+	fsDriver := &driver{rootDirectory: params.RootDirectory}
+
 	return &Driver{
 		baseEmbed: baseEmbed{
 			Base: base.Base{
-				StorageDriver: &driver{
-					rootDirectory: rootDirectory,
-				},
+				StorageDriver: base.NewRegulator(fsDriver, params.MaxThreads),
 			},
 		},
 	}
@@ -120,11 +158,11 @@ func (d *driver) Reader(ctx context.Context, path string, offset int64) (io.Read
 		return nil, err
 	}
 
-	seekPos, err := file.Seek(int64(offset), os.SEEK_SET)
+	seekPos, err := file.Seek(offset, io.SeekStart)
 	if err != nil {
 		file.Close()
 		return nil, err
-	} else if seekPos < int64(offset) {
+	} else if seekPos < offset {
 		file.Close()
 		return nil, storagedriver.InvalidOffsetError{Path: path, Offset: offset}
 	}
@@ -153,12 +191,12 @@ func (d *driver) Writer(ctx context.Context, subPath string, append bool) (stora
 			return nil, err
 		}
 	} else {
-		n, err := fp.Seek(0, os.SEEK_END)
+		n, err := fp.Seek(0, io.SeekEnd)
 		if err != nil {
 			fp.Close()
 			return nil, err
 		}
-		offset = int64(n)
+		offset = n
 	}
 
 	return newFileWriter(fp, offset), nil
@@ -249,6 +287,12 @@ func (d *driver) Delete(ctx context.Context, subPath string) error {
 // May return an UnsupportedMethodErr in certain StorageDriver implementations.
 func (d *driver) URLFor(ctx context.Context, path string, options map[string]interface{}) (string, error) {
 	return "", storagedriver.ErrUnsupportedMethod{}
+}
+
+// Walk traverses a filesystem defined within driver, starting
+// from the given path, calling f on each file
+func (d *driver) Walk(ctx context.Context, path string, f storagedriver.WalkFn) error {
+	return storagedriver.WalkFallback(ctx, d, path, f)
 }
 
 // fullPath returns the absolute path of a key within the Driver's storage.

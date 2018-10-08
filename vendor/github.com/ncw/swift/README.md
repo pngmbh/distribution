@@ -9,7 +9,7 @@ See here for package docs
 
   http://godoc.org/github.com/ncw/swift
 
-[![Build Status](https://travis-ci.org/ncw/swift.png)](https://travis-ci.org/ncw/swift)
+[![Build Status](https://api.travis-ci.org/ncw/swift.svg?branch=master)](https://travis-ci.org/ncw/swift) [![GoDoc](https://godoc.org/github.com/ncw/swift?status.svg)](https://godoc.org/github.com/ncw/swift) 
 
 Install
 -------
@@ -26,26 +26,27 @@ See here for full package docs
 - http://godoc.org/github.com/ncw/swift
 
 Here is a short example from the docs
+```go
+import "github.com/ncw/swift"
 
-    import "github.com/ncw/swift"
-
-    // Create a connection
-    c := swift.Connection{
-        UserName: "user",
-        ApiKey:   "key",
-        AuthUrl:  "auth_url",
-        Domain:   "domain",  // Name of the domain (v3 auth only)
-        Tenant:   "tenant",  // Name of the tenant (v2 auth only)
-    }
-    // Authenticate
-    err := c.Authenticate()
-    if err != nil {
-        panic(err)
-    }
-    // List all the containers
-    containers, err := c.ContainerNames(nil)
-    fmt.Println(containers)
-    // etc...
+// Create a connection
+c := swift.Connection{
+    UserName: "user",
+    ApiKey:   "key",
+    AuthUrl:  "auth_url",
+    Domain:   "domain",  // Name of the domain (v3 auth only)
+    Tenant:   "tenant",  // Name of the tenant (v2 auth only)
+}
+// Authenticate
+err := c.Authenticate()
+if err != nil {
+    panic(err)
+}
+// List all the containers
+containers, err := c.ContainerNames(nil)
+fmt.Println(containers)
+// etc...
+```
 
 Additions
 ---------
@@ -134,3 +135,9 @@ Contributors
 - Fabian Ruff <fabian@progra.de>
 - Arturo Reuschenbach Puncernau <reuschenbach@gmail.com>
 - Petr Kotek <petr.kotek@bigcommerce.com>
+- Stefan Majewsky <stefan.majewsky@sap.com>
+- Cezar Sa Espinola <cezarsa@gmail.com>
+- Sam Gunaratne <samgzeit@gmail.com>
+- Richard Scothern <richard.scothern@gmail.com>
+- Michel Couillard <couillard.michel@voxlog.ca>
+- Christopher Waldon <ckwaldon@us.ibm.com>

@@ -3,15 +3,20 @@ package notifications
 import (
 	"net/http"
 	"time"
+
+	"github.com/docker/distribution/configuration"
 )
 
 // EndpointConfig covers the optional configuration parameters for an active
 // endpoint.
 type EndpointConfig struct {
-	Headers   http.Header
-	Timeout   time.Duration
-	Threshold int
-	Backoff   time.Duration
+	Headers           http.Header
+	Timeout           time.Duration
+	Threshold         int
+	Backoff           time.Duration
+	IgnoredMediaTypes []string
+	Transport         *http.Transport `json:"-"`
+	Ignore            configuration.Ignore
 }
 
 // defaults set any zero-valued fields to a reasonable default.
@@ -26,6 +31,10 @@ func (ec *EndpointConfig) defaults() {
 
 	if ec.Backoff <= 0 {
 		ec.Backoff = time.Second
+	}
+
+	if ec.Transport == nil {
+		ec.Transport = http.DefaultTransport.(*http.Transport)
 	}
 }
 
@@ -54,9 +63,11 @@ func NewEndpoint(name, url string, config EndpointConfig) *Endpoint {
 	// Configures the inmemory queue, retry, http pipeline.
 	endpoint.Sink = newHTTPSink(
 		endpoint.url, endpoint.Timeout, endpoint.Headers,
-		endpoint.metrics.httpStatusListener())
+		endpoint.Transport, endpoint.metrics.httpStatusListener())
 	endpoint.Sink = newRetryingSink(endpoint.Sink, endpoint.Threshold, endpoint.Backoff)
 	endpoint.Sink = newEventQueue(endpoint.Sink, endpoint.metrics.eventQueueListener())
+	mediaTypes := append(config.Ignore.MediaTypes, config.IgnoredMediaTypes...)
+	endpoint.Sink = newIgnoredSink(endpoint.Sink, mediaTypes, config.Ignore.Actions)
 
 	register(&endpoint)
 	return &endpoint

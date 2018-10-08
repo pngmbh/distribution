@@ -1,21 +1,32 @@
 // Package ec2metadata provides the client for making API calls to the
 // EC2 Metadata service.
+//
+// This package's client can be disabled completely by setting the environment
+// variable "AWS_EC2_METADATA_DISABLED=true". This environment variable set to
+// true instructs the SDK to disable the EC2 Metadata client. The client cannot
+// be used while the environemnt variable is set to true, (case insensitive).
 package ec2metadata
 
 import (
-	"io/ioutil"
+	"bytes"
+	"errors"
+	"io"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/client"
 	"github.com/aws/aws-sdk-go/aws/client/metadata"
+	"github.com/aws/aws-sdk-go/aws/corehandlers"
 	"github.com/aws/aws-sdk-go/aws/request"
 )
 
 // ServiceName is the name of the service.
 const ServiceName = "ec2metadata"
+const disableServiceEnvVar = "AWS_EC2_METADATA_DISABLED"
 
 // A EC2Metadata is an EC2 Metadata service Client.
 type EC2Metadata struct {
@@ -73,6 +84,21 @@ func NewClient(cfg aws.Config, handlers request.Handlers, endpoint, signingRegio
 	svc.Handlers.Validate.Clear()
 	svc.Handlers.Validate.PushBack(validateEndpointHandler)
 
+	// Disable the EC2 Metadata service if the environment variable is set.
+	// This shortcirctes the service's functionality to always fail to send
+	// requests.
+	if strings.ToLower(os.Getenv(disableServiceEnvVar)) == "true" {
+		svc.Handlers.Send.SwapNamed(request.NamedHandler{
+			Name: corehandlers.SendHandler.Name,
+			Fn: func(r *request.Request) {
+				r.Error = awserr.New(
+					request.CanceledErrorCode,
+					"EC2 IMDS access disabled via "+disableServiceEnvVar+" env var",
+					nil)
+			},
+		})
+	}
+
 	// Add additional options to the service config
 	for _, option := range opts {
 		option(svc.Client)
@@ -91,23 +117,28 @@ type metadataOutput struct {
 
 func unmarshalHandler(r *request.Request) {
 	defer r.HTTPResponse.Body.Close()
-	b, err := ioutil.ReadAll(r.HTTPResponse.Body)
-	if err != nil {
+	b := &bytes.Buffer{}
+	if _, err := io.Copy(b, r.HTTPResponse.Body); err != nil {
 		r.Error = awserr.New("SerializationError", "unable to unmarshal EC2 metadata respose", err)
+		return
 	}
 
-	data := r.Data.(*metadataOutput)
-	data.Content = string(b)
+	if data, ok := r.Data.(*metadataOutput); ok {
+		data.Content = b.String()
+	}
 }
 
 func unmarshalError(r *request.Request) {
 	defer r.HTTPResponse.Body.Close()
-	_, err := ioutil.ReadAll(r.HTTPResponse.Body)
-	if err != nil {
+	b := &bytes.Buffer{}
+	if _, err := io.Copy(b, r.HTTPResponse.Body); err != nil {
 		r.Error = awserr.New("SerializationError", "unable to unmarshal EC2 metadata error respose", err)
+		return
 	}
 
-	// TODO extract the error...
+	// Response body format is not consistent between metadata endpoints.
+	// Grab the error message as a string and include that as the source error
+	r.Error = awserr.New("EC2MetadataError", "failed to make EC2Metadata request", errors.New(b.String()))
 }
 
 func validateEndpointHandler(r *request.Request) {
